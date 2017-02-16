@@ -1,0 +1,115 @@
+tpcc-mysqlの実行を通してCryptDBで未実装の機能を発見する。
+合わせてCryptDB環境上で実行出来るようにtpcc-mysqlを変更する。
+
+■■問題：cryptDBにて利用できない型をtpcc-mysqlで利用している(decimal,datetime)
+■テーブルのデータ型を変更
+（利用可能なカラム型）
+TINYINT,SMALLINT,MEDIUMINT,INTEGER,BIGINT,
+CHAR(),VARCHAR(),TINYBLOB,BLOB,MEDIUMBLOB,LONGBLOB
+
+（利用不可能なカラム型）
+FLOAT,DOUBLE,DECIMAL,DATE,DATETIME,TIMESTAMP,TIME,YEAR,ENUM(),SET()
+
+（create_table.sqlを変更、プログラムも合わせて変更)
+・warehouse
+w_tax decimal(4,2) -> int
+w_ytd decimal(12,2) -> int
+
+・district
+w_tax decimal(4,2) -> int
+w_ytd decimal(12,2) -> int
+
+・customer
+c_since datetime -> varchar(20)
+c_discount decimal(4,2) -> int
+c_balance decimal(12,2) -> int
+c_ytd_payment decimal(12,2) -> int
+
+・history
+h_date datetime -> varchar(20)
+h_amount decimal(6,2) -> int
+
+・orders
+o_entry_d datetime -> varchar(20)
+
+・order_line
+ol_amount decimal(6,2) -> int
+ol_delivery_d datetime -> varchar(20)
+
+・item
+i_price decimal(5,2) -> int
+
+・stock
+s_ytd decimal(8,0) -> int
+
+
+■外部キー制約が利用不可能
+(add_fkey_idx.sqlにてすべてのテーブルに外部キー制約を設定）
+→すべて設定しないよう変更
+
+
+■値のload(tpcc_load)実行時にDBエラー
+　プログラム内、insert文のvalues(?,?)が原因（prepared statmentが利用できない）
+　→prepared statmentを利用しないように変更（SQL全文をプログラムから発行）
+
+
+■マイナスの値が格納できない
+　（プロキシのプログラムで弾かれるようになっている（can't handle out of range value!）,型としてSIGNEDを指定しても無駄）
+　→マイナスの値を格納しないように変更
+　　（処理側でマイナスの値として扱うように変更する）
+
+
+■load実行時にproxyから切断される
+　→接続時間が原因
+　→切断までの時間でデータ入力できるように変更して実行
+　（tpcc-mysqlのload.cのパート（warehouse,customer等）に分けてデータをロードする方法を利用）
+
+
+■TPC-C実施のための変更
+・変更対象ファイル
+delivery.c
+driver.c
+main.c
+neword.c
+ordstat.c
+payment.c
+slev.c
+load.c（件数変更のため）
+
+・非変更ファイル
+Makefile
+delivery.o
+driver.o
+load.o
+main.o
+neword.o
+ordstat.o
+parse_port.h
+payment.o
+rthist.h
+rthist.o
+sequence.c
+sequence.h
+sequence.o
+slev.o
+spt_proc.c
+spt_proc.h
+spt_proc.o
+support.c
+support.o
+tpc.h
+trans_if.h
+
+
+■クエリが実行できない
+・クエリ内での計算
+　クエリ内で計算を含んでいる場合実行不能
+　（計算にカラムを含まないwhere id < (20-5)等でも実行不能）
+　→先に値を取得するクエリを実行、計算した値をクエリ内に入れて実行
+
+・関数が利用不可能
+　COALESCE（）が利用不可能
+　→NULL値の場合に0に置き換えて値を取得する処理のため、クエリ結果取得時に別処理
+
+・サブクエリが利用不可能
+　→他のidのMAX値を取得する処理のため事前に別のクエリを実行して値を取得しておく
